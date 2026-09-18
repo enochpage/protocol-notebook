@@ -13,7 +13,7 @@ Markdown reference syntax:
 - `[Page title](#page:page-id)` navigates to another page.
 - `![Image description](asset:image-id.png)` embeds an image stored with the notebook.
 
-IDs remain stable when labels change. Results are grouped by page, ordered active nodes, skip states, selected option IDs, and references used in the protocol. Descendants of skipped panels are excluded. Drafts use the same grouping key. Saving an experiment captures immutable parameter labels and resolved Markdown; changing the template does not rewrite history. Older template snapshots are labeled.
+IDs remain stable when labels change. Results are grouped by page, ordered active nodes, skip states, selected option IDs and labels, and references used in the protocol. Changing an option's value therefore does not recall results recorded for its previous value. Descendants of skipped panels are excluded. Drafts use the same grouping key. Saving an experiment captures immutable parameter labels and resolved Markdown; changing the template does not rewrite history. Older template snapshots are labeled.
 
 ## Storage
 

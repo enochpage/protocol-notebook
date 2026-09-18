@@ -52,3 +52,9 @@ cargo test
 ```
 
 See [the MVP specification](docs/MVP.md) for behavior, persistence, and current limits.
+
+## Continuing development with Claude Code or Codex
+
+Start in this repository and read [HANDOFF.md](HANDOFF.md). It records completed work, accepted design decisions, verification boundaries, and remaining gaps.
+
+[AGENTS.md](AGENTS.md) contains shared development instructions; [CLAUDE.md](CLAUDE.md) imports them for Claude Code. Both assistants are instructed to update the same handoff after substantive work. Use one assistant at a time in a shared checkout, and use Git checkpoints to preserve reviewed changes. Private chat histories are not required to continue.
