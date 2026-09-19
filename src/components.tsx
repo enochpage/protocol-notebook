@@ -3,8 +3,9 @@ import type { CSSProperties, ReactNode } from "react";
 import Markdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { flatten, refLabel, uid } from "./model";
-import type { Page, ParameterNode, Panel, Workspace } from "./model";
+import { flatten, nodeTitle, refLabel, uid } from "./model";
+import { BlockDocument } from "./blocks";
+import type { Page, ParameterNode, Panel, Selector, Workspace } from "./model";
 import { loadAsset, native, saveAsset } from "./storage";
 
 export function Icon({ name, size = 18 }: { name: string; size?: number }) {
@@ -49,6 +50,26 @@ export function Icon({ name, size = 18 }: { name: string; size?: number }) {
           d="m9 15 6-6M8 16l-1 1a4 4 0 0 1-6-6l4-4a4 4 0 0 1 6 0M16 8l1-1a4 4 0 0 1 6 6l-4 4a4 4 0 0 1-6 0"
           transform="translate(1 0) scale(.9)"
         />
+      </>
+    ),
+    grip: (
+      <>
+        <circle cx="9" cy="6" r="1.4" />
+        <circle cx="15" cy="6" r="1.4" />
+        <circle cx="9" cy="12" r="1.4" />
+        <circle cx="15" cy="12" r="1.4" />
+        <circle cx="9" cy="18" r="1.4" />
+        <circle cx="15" cy="18" r="1.4" />
+      </>
+    ),
+    expand: (
+      <>
+        <path d="M9 4H4v5M15 4h5v5M15 20h5v-5M9 20H4v-5" />
+      </>
+    ),
+    shrink: (
+      <>
+        <path d="M4 9h5V4M20 9h-5V4M20 15h-5v5M4 15h5v5" />
       </>
     ),
     map: (
@@ -227,15 +248,14 @@ export function NodeForm({
   save,
   close,
 }: {
-  node?: ParameterNode;
+  node?: Panel | Selector;
   kind: "panel" | "selector";
   save: (node: ParameterNode) => void;
   close: () => void;
 }) {
   const [title, setTitle] = useState(node?.title || "");
-  const [color, setColor] = useState(
-    node?.kind === "panel" ? node.color : "blue",
-  );
+  // An existing panel keeps its color; a new one is given the next in the palette.
+  const color = node?.kind === "panel" ? node.color : "";
   const [options, setOptions] = useState(
     node?.kind === "selector"
       ? node.options
@@ -295,21 +315,10 @@ export function NodeForm({
         />
       </label>
       {kind === "panel" ? (
-        <>
-          <label className="field">
-            Color
-            <select value={color} onChange={(e) => setColor(e.target.value)}>
-              <option value="blue">Slate blue</option>
-              <option value="teal">Sea glass</option>
-              <option value="amber">Amber</option>
-              <option value="violet">Wisteria</option>
-            </select>
-          </label>
-          <p className="muted">
-            All included panels run in order. Add nested panels and selectors
-            after creating this panel.
-          </p>
-        </>
+        <p className="muted">
+          All included panels run in order. Add nested panels, selectors, and
+          notes after creating this panel.
+        </p>
       ) : (
         <>
           <label className="field">Parameter options</label>
@@ -393,6 +402,48 @@ export function AssetImage({ id, alt }: { id: string; alt: string }) {
     <span className="muted">Loading image…</span>
   );
 }
+// `> [!note] text` and `> [!toggle] title` stay valid Markdown elsewhere and
+// render here as a callout or a foldable section.
+const CALLOUT = /^>\s*\[!(note|tip|warning|toggle)\]\s*(.*)$/i;
+type Segment =
+  | { kind: "markdown"; text: string }
+  | { kind: string; title: string; body: string; callout: true };
+function segments(body: string): Segment[] {
+  const parts: Segment[] = [];
+  const lines = body.split("\n");
+  let plain: string[] = [];
+  let fenced = false;
+  const flushPlain = () => {
+    if (plain.join("\n").trim())
+      parts.push({ kind: "markdown", text: plain.join("\n") });
+    plain = [];
+  };
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index];
+    if (/^\s*```/.test(line)) fenced = !fenced;
+    const marker = fenced ? null : line.match(CALLOUT);
+    if (!marker) {
+      plain.push(line);
+      continue;
+    }
+    flushPlain();
+    const inner: string[] = [];
+    let next = index + 1;
+    while (next < lines.length && /^>/.test(lines[next])) {
+      inner.push(lines[next].replace(/^>\s?/, ""));
+      next++;
+    }
+    parts.push({
+      callout: true,
+      kind: marker[1].toLowerCase(),
+      title: marker[2].trim(),
+      body: inner.join("\n"),
+    });
+    index = next - 1;
+  }
+  flushPlain();
+  return parts;
+}
 export function MarkdownView({
   body,
   page,
@@ -404,65 +455,101 @@ export function MarkdownView({
   navigate?: (id: string) => void;
   pick?: (id: string, type: string) => void;
 }) {
+  const render = (text: string, key?: number) => (
+    <Markdown
+      key={key}
+      remarkPlugins={[remarkGfm]}
+      urlTransform={(url) =>
+        /^asset:[a-zA-Z0-9_.-]+$/.test(url) ? url : defaultUrlTransform(url)
+      }
+      components={{
+        a: ({ href = "", children }) => {
+          if (href.startsWith("#ref:") && page && pick) {
+            const [, id, type] = href.split(":");
+            const label = refLabel(page, id, type);
+            return (
+              <button
+                className={`ref-chip ${label.includes("skipped") ? "ref-skipped" : ""}`}
+                onClick={() => pick(id, type)}
+                title="Change this reference"
+              >
+                {label}
+                <Icon name="down" size={12} />
+              </button>
+            );
+          }
+          if (href.startsWith("#page:") && navigate)
+            return (
+              <button
+                className="page-inline"
+                onClick={() => navigate(href.slice(6))}
+              >
+                <Icon name="page" size={14} />
+                {children}
+              </button>
+            );
+          return (
+            <a
+              href={href}
+              target="_blank"
+              rel="noreferrer"
+              onClick={(e) => {
+                if (native && /^https?:/.test(href)) {
+                  e.preventDefault();
+                  void openUrl(href).catch(() => {});
+                }
+              }}
+            >
+              {children}
+            </a>
+          );
+        },
+        img: ({ src = "", alt = "" }) =>
+          src.startsWith("asset:") ? (
+            <AssetImage id={src.slice(6)} alt={alt} />
+          ) : (
+            <img src={src} alt={alt} loading="lazy" />
+          ),
+      }}
+    >
+      {text}
+    </Markdown>
+  );
   return (
     <div className="markdown">
-      <Markdown
-        remarkPlugins={[remarkGfm]}
-        urlTransform={(url) =>
-          /^asset:[a-zA-Z0-9_.-]+$/.test(url) ? url : defaultUrlTransform(url)
-        }
-        components={{
-          a: ({ href = "", children }) => {
-            if (href.startsWith("#ref:") && page && pick) {
-              const [, id, type] = href.split(":");
-              const label = refLabel(page, id, type);
-              return (
-                <button
-                  className={`ref-chip ${label.includes("skipped") ? "ref-skipped" : ""}`}
-                  onClick={() => pick(id, type)}
-                  title="Change this reference"
-                >
-                  {label}
-                  <Icon name="down" size={12} />
-                </button>
-              );
-            }
-            if (href.startsWith("#page:") && navigate)
-              return (
-                <button
-                  className="page-inline"
-                  onClick={() => navigate(href.slice(6))}
-                >
-                  <Icon name="page" size={14} />
-                  {children}
-                </button>
-              );
-            return (
-              <a
-                href={href}
-                target="_blank"
-                rel="noreferrer"
-                onClick={(e) => {
-                  if (native && /^https?:/.test(href)) {
-                    e.preventDefault();
-                    void openUrl(href).catch(() => {});
-                  }
-                }}
-              >
-                {children}
-              </a>
-            );
-          },
-          img: ({ src = "", alt = "" }) =>
-            src.startsWith("asset:") ? (
-              <AssetImage id={src.slice(6)} alt={alt} />
-            ) : (
-              <img src={src} alt={alt} loading="lazy" />
-            ),
-        }}
-      >
-        {body}
-      </Markdown>
+      {segments(body).map((part, index) =>
+        "callout" in part ? (
+          part.kind === "toggle" ? (
+            <details className="md-toggle" key={index}>
+              <summary>{part.title || "Details"}</summary>
+              <MarkdownView
+                body={part.body}
+                page={page}
+                navigate={navigate}
+                pick={pick}
+              />
+            </details>
+          ) : (
+            <div className={`md-callout callout-${part.kind}`} key={index}>
+              <Icon
+                name={part.kind === "warning" ? "skip" : "help"}
+                size={16}
+              />
+              <div>
+                {part.title && <strong>{part.title}</strong>}
+                <MarkdownView
+                  body={part.body}
+                  page={page}
+                  navigate={navigate}
+                  pick={pick}
+                />
+              </div>
+            </div>
+          )
+        ) : (
+          render(part.text, index)
+        ),
+      )}
     </div>
   );
 }
@@ -519,11 +606,12 @@ export function ReferencePicker({
           : flatten(page.nodes)
               .filter(
                 ({ node }) =>
-                  node.title.toLowerCase().includes(search.toLowerCase()) ||
-                  (node.kind === "selector" &&
-                    node.options.some((o) =>
-                      o.label.toLowerCase().includes(search.toLowerCase()),
-                    )),
+                  node.kind !== "text" &&
+                  (node.title.toLowerCase().includes(search.toLowerCase()) ||
+                    (node.kind === "selector" &&
+                      node.options.some((o) =>
+                        o.label.toLowerCase().includes(search.toLowerCase()),
+                      ))),
               )
               .map(({ node, depth }) => (
                 <div key={node.id} style={{ paddingLeft: depth * 14 }}>
@@ -531,14 +619,14 @@ export function ReferencePicker({
                     onClick={() =>
                       insert(
                         node.id,
-                        node.title,
+                        nodeTitle(node),
                         node.kind === "panel" ? "value" : "title",
                       )
                     }
                   >
                     <Icon name={node.kind === "panel" ? "layers" : "more"} />
                     <span>
-                      {node.title}
+                      {nodeTitle(node)}
                       <small>
                         {node.kind === "panel"
                           ? "Panel reference"
@@ -587,14 +675,64 @@ export function ParameterModule({
   edit,
   remove,
   openPanel,
+  reorder,
+  move,
 }: {
   page: Page;
   update: (id: string, fn: (node: ParameterNode) => ParameterNode) => void;
-  add: (kind: "panel" | "selector", parent: string | null) => void;
+  add: (
+    kind: "panel" | "selector" | "text",
+    parent: string | null,
+    afterId?: string,
+  ) => void;
   edit: (node: ParameterNode) => void;
   remove: (node: ParameterNode) => void;
   openPanel: (panel: Panel) => void;
+  reorder: (id: string, targetId: string, after: boolean) => void;
+  move: (id: string, direction: number) => void;
 }) {
+  const [dragging, setDragging] = useState<string | null>(null);
+  const [over, setOver] = useState<{ id: string; after: boolean } | null>(null);
+  // Refs as well as state: a pointer move can arrive before React has
+  // re-rendered, and the handler must still know what is being dragged.
+  const held = useRef<string | null>(null);
+  const target = useRef<{ id: string; after: boolean } | null>(null);
+  const [writing, setWriting] = useState<{ id: string; text: string } | null>(
+    null,
+  );
+  const [noteSlash, setNoteSlash] = useState<{
+    id: string;
+    start: number;
+    query: string;
+  } | null>(null);
+  const grow = (el: HTMLTextAreaElement | null) => {
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  };
+  const commitNote = () => {
+    if (!writing) return;
+    const { id, text } = writing;
+    update(id, (node) => (node.kind === "text" ? { ...node, text } : node));
+    setWriting(null);
+    setNoteSlash(null);
+  };
+  const noteCommand = (
+    kind: "panel" | "selector",
+    node: ParameterNode,
+    parentId: string | null,
+  ) => {
+    if (!writing || !noteSlash) return;
+    const text =
+      writing.text.slice(0, noteSlash.start) +
+      writing.text.slice(noteSlash.start + 1 + noteSlash.query.length);
+    update(node.id, (current) =>
+      current.kind === "text" ? { ...current, text } : current,
+    );
+    setWriting(null);
+    setNoteSlash(null);
+    add(kind, parentId, node.id);
+  };
   const [collapsed, setCollapsed] = useState<Set<string>>(
     () =>
       new Set(
@@ -603,20 +741,203 @@ export function ParameterModule({
           .map(({ node }) => node.id),
       ),
   );
+  // Pointer events rather than HTML5 drag and drop: WKWebView, which the Mac
+  // app runs on, does not deliver dragover/drop reliably.
+  const pointerDrag = (node: ParameterNode) => ({
+    onPointerDown: (e: React.PointerEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+      held.current = node.id;
+      target.current = null;
+      setDragging(node.id);
+      setOver(null);
+    },
+    onPointerMove: (e: React.PointerEvent) => {
+      if (held.current !== node.id) return;
+      const element = document
+        .elementFromPoint(e.clientX, e.clientY)
+        ?.closest("[data-node]") as HTMLElement | null;
+      const id = element?.dataset.node;
+      if (!element || !id || id === node.id) {
+        target.current = null;
+        setOver(null);
+        return;
+      }
+      const box = element.getBoundingClientRect();
+      const next = { id, after: e.clientY > box.top + box.height / 2 };
+      target.current = next;
+      setOver(next);
+    },
+    onPointerUp: (e: React.PointerEvent) => {
+      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+      const moved = held.current;
+      const landing = target.current;
+      held.current = null;
+      target.current = null;
+      setDragging(null);
+      setOver(null);
+      if (moved && landing && landing.id !== moved)
+        reorder(moved, landing.id, landing.after);
+    },
+    onPointerCancel: () => {
+      held.current = null;
+      target.current = null;
+      setDragging(null);
+      setOver(null);
+    },
+  });
+  const handle = (node: ParameterNode, parentId: string | null) => (
+    <span className="node-gutter">
+      <button
+        className="drag-handle node-add"
+        aria-label={`Add a note below ${nodeTitle(node)}`}
+        title="Add a note below. Type / in it for a panel or selector."
+        onClick={() => add("text", parentId, node.id)}
+      >
+        <Icon name="plus" size={13} />
+      </button>
+      <button
+        className={`drag-handle ${dragging === node.id ? "is-holding" : ""}`}
+        aria-label={`Move ${nodeTitle(node)}. Arrow keys move it, Return adds a note below.`}
+        title="Drag to move. Arrow keys move it, Return adds a note below."
+        {...pointerDrag(node)}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+            e.preventDefault();
+            move(node.id, e.key === "ArrowUp" ? -1 : 1);
+          }
+          if (e.key === "Enter") {
+            e.preventDefault();
+            add("text", parentId, node.id);
+          }
+        }}
+      >
+        <Icon name="grip" size={14} />
+      </button>
+    </span>
+  );
   const render = (
     node: ParameterNode,
     inactive: boolean,
     inheritedColor = "blue",
+    parentId: string | null = null,
   ): ReactNode => {
+    if (node.kind === "text") {
+      const open = writing?.id === node.id;
+      return (
+        <div
+          key={node.id}
+          id={`parameter-${node.id}`}
+          data-node={node.id}
+          className={`note-block ${dragging === node.id ? "is-dragging" : ""} ${over?.id === node.id && dragging !== node.id ? (over.after ? "drop-below" : "drop-above") : ""}`}
+        >
+          {handle(node, parentId)}
+          {open ? (
+            <textarea
+              className="note-editor"
+              aria-label="Note"
+              autoFocus
+              ref={grow}
+              value={writing.text}
+              placeholder="Write a note. Type / to add a panel or selector."
+              onChange={(e) => {
+                setWriting({ id: node.id, text: e.target.value });
+                grow(e.target);
+                const caret = e.target.selectionStart;
+                const found = e.target.value
+                  .slice(0, caret)
+                  .match(/(?:^|\s)\/([a-z]*)$/i);
+                setNoteSlash(
+                  found
+                    ? {
+                        id: node.id,
+                        start: caret - found[1].length - 1,
+                        query: found[1],
+                      }
+                    : null,
+                );
+              }}
+              onBlur={() => {
+                if (!noteSlash) commitNote();
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  if (noteSlash) setNoteSlash(null);
+                  else commitNote();
+                }
+              }}
+            />
+          ) : (
+            <div
+              className="note-view"
+              role="button"
+              tabIndex={0}
+              title="Click to write here"
+              onClick={() => setWriting({ id: node.id, text: node.text })}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  setWriting({ id: node.id, text: node.text });
+                }
+              }}
+            >
+              {node.text.trim() ? (
+                <MarkdownView body={node.text} page={page} />
+              ) : (
+                <span className="note-placeholder">
+                  Write a note. Type / to add a panel or selector.
+                </span>
+              )}
+            </div>
+          )}
+          <button
+            className="icon-button remove-node"
+            aria-label="Remove this note"
+            onClick={() => remove(node)}
+          >
+            <Icon name="close" size={13} />
+          </button>
+          {noteSlash?.id === node.id && (
+            <div
+              className="slash-menu note-menu"
+              onMouseDown={(e) => e.preventDefault()}
+            >
+              {(["panel", "selector"] as const)
+                .filter(
+                  (kind) =>
+                    !noteSlash.query || kind.startsWith(noteSlash.query),
+                )
+                .map((kind) => (
+                  <button
+                    key={kind}
+                    onClick={() => noteCommand(kind, node, parentId)}
+                  >
+                    <strong>{kind === "panel" ? "Panel" : "Selector"}</strong>
+                    <small>
+                      {kind === "panel"
+                        ? "A stage that can hold more panels"
+                        : "One value chosen from a list"}
+                    </small>
+                  </button>
+                ))}
+            </div>
+          )}
+        </div>
+      );
+    }
     const disabled = inactive || node.skipped;
     const color = node.kind === "panel" ? node.color : inheritedColor;
     return (
       <div
         key={node.id}
         id={`parameter-${node.id}`}
-        className={`${node.kind}-block tone-${color} ${disabled ? "is-skipped" : ""}`}
+        data-node={node.id}
+        className={`${node.kind}-block tone-${color} ${disabled ? "is-skipped" : ""} ${dragging === node.id ? "is-dragging" : ""} ${over?.id === node.id && dragging !== node.id ? (over.after ? "drop-below" : "drop-above") : ""}`}
       >
         <div className="parameter-heading">
+          {handle(node, parentId)}
           {node.kind === "panel" && (
             <button
               className="icon-button collapse-node"
@@ -655,7 +976,9 @@ export function ParameterModule({
               aria-label={`${node.skipped ? "Include" : "Skip"} ${node.title}`}
               aria-pressed={node.skipped}
               onClick={() =>
-                update(node.id, (n) => ({ ...n, skipped: !n.skipped }))
+                update(node.id, (n) =>
+                  n.kind === "text" ? n : { ...n, skipped: !n.skipped },
+                )
               }
             >
               {node.skipped ? "Skipped" : "Skip"}
@@ -707,7 +1030,9 @@ export function ParameterModule({
         ) : (
           !collapsed.has(node.id) && (
             <div className="panel-contents">
-              {node.children.map((child) => render(child, disabled, color))}
+              {node.children.map((child) =>
+                render(child, disabled, color, node.id),
+              )}
               <div className="add-child">
                 <button onClick={() => add("panel", node.id)}>
                   <Icon name="plus" size={12} />
@@ -716,6 +1041,10 @@ export function ParameterModule({
                 <button onClick={() => add("selector", node.id)}>
                   <Icon name="plus" size={12} />
                   Selector
+                </button>
+                <button onClick={() => add("text", node.id)}>
+                  <Icon name="plus" size={12} />
+                  Note
                 </button>
               </div>
             </div>
@@ -726,7 +1055,7 @@ export function ParameterModule({
   };
   return (
     <div className="parameter-module">
-      {page.nodes.map((node) => render(node, false))}
+      {page.nodes.map((node) => render(node, false, "blue", null))}
       {!page.nodes.length && (
         <p className="empty-copy">
           Add the stages and variables for this page. Leave this empty when you
@@ -738,8 +1067,8 @@ export function ParameterModule({
           <Icon name="plus" size={14} />
           Add panel
         </button>
-        <button className="text-button" onClick={() => add("selector", null)}>
-          Add selector
+        <button className="text-button" onClick={() => add("text", null)}>
+          Add note
         </button>
       </div>
     </div>
@@ -760,31 +1089,14 @@ export function Editor({
   pick: (id: string, type: string) => void;
   setOption: (id: string, option: string) => void;
 }) {
-  const [editing, setEditing] = useState(!page.body);
   const [picker, setPicker] = useState<"panel" | "page" | null>(null);
+  const [insertion, setInsertion] = useState<{
+    text: string;
+    token: number;
+  } | null>(null);
   const [error, setError] = useState("");
-  const input = useRef<HTMLTextAreaElement>(null);
-  const selection = useRef({ start: 0, end: 0 });
   const upload = useRef<HTMLInputElement>(null);
-  const markSelection = () => {
-    if (input.current)
-      selection.current = {
-        start: input.current.selectionStart,
-        end: input.current.selectionEnd,
-      };
-  };
-  const insert = (text: string) => {
-    const { start, end } = selection.current;
-    change(page.body.slice(0, start) + text + page.body.slice(end));
-    setPicker(null);
-    requestAnimationFrame(() => {
-      input.current?.focus();
-      input.current?.setSelectionRange(
-        start + text.length,
-        start + text.length,
-      );
-    });
-  };
+  const insert = (text: string) => setInsertion({ text, token: Date.now() });
   return (
     <section className="section protocol-section">
       <div className="section-heading">
@@ -792,87 +1104,23 @@ export function Editor({
           <span className="section-index">02</span>
           <h2>Protocol</h2>
         </div>
-        <div className="segmented">
-          <button
-            className={!editing ? "active" : ""}
-            onClick={() => setEditing(false)}
-          >
-            Read
-          </button>
-          <button
-            className={editing ? "active" : ""}
-            onClick={() => setEditing(true)}
-          >
-            Edit
-          </button>
-        </div>
+        <span className="subtle-label">
+          Click a block to edit it · / for blocks
+        </span>
       </div>
-      {editing ? (
-        <>
-          <div className="editor-tools">
-            <span>Markdown</span>
-            <button
-              onClick={() => {
-                markSelection();
-                setPicker("panel");
-              }}
-            >
-              /panel
-            </button>
-            <button
-              onClick={() => {
-                markSelection();
-                setPicker("page");
-              }}
-            >
-              /page
-            </button>
-            <button
-              onClick={() => {
-                markSelection();
-                upload.current?.click();
-              }}
-            >
-              <Icon name="photo" size={14} />
-              Image
-            </button>
-          </div>
-          <textarea
-            ref={input}
-            className="markdown-editor"
-            aria-label="Protocol Markdown"
-            value={page.body}
-            placeholder={
-              "# Procedure\n\nWrite your protocol. Type /panel to insert a variable."
-            }
-            onChange={(e) => {
-              const value = e.target.value;
-              change(value);
-              const end = e.target.selectionStart;
-              const match = value.slice(0, end).match(/\/(panel|page)$/);
-              if (match) {
-                selection.current = { start: end - match[0].length, end };
-                setPicker(match[1] as "panel" | "page");
-              }
-            }}
-          />
-          <p className="editor-hint">
-            References stay linked when names or selections change. ⌘S saves
-            your notebook.
-          </p>
-        </>
-      ) : page.body ? (
-        <MarkdownView
-          body={page.body}
-          page={page}
-          navigate={navigate}
-          pick={pick}
-        />
-      ) : (
-        <button className="empty-editor" onClick={() => setEditing(true)}>
-          Start writing your protocol…
-        </button>
-      )}
+      <BlockDocument
+        value={page.body}
+        change={change}
+        page={page}
+        navigate={navigate}
+        pick={pick}
+        onAction={(action) => {
+          if (action === "image") upload.current?.click();
+          else setPicker(action === "reference" ? "panel" : "page");
+        }}
+        insertion={insertion}
+        placeholder="Write your protocol, or type / for blocks"
+      />
       <input
         ref={upload}
         type="file"
@@ -905,6 +1153,7 @@ export function Editor({
             mode={picker}
             insert={(id, title, type, option) => {
               if (option) setOption(id, option);
+              setPicker(null);
               insert(
                 `[${title.replace(/[\[\]]/g, "")}](${type === "page" ? "#page:" + id : "#ref:" + id + ":" + type})`,
               );
@@ -918,78 +1167,145 @@ export function Editor({
 export function PathMap({ page }: { page: Page }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [position, setPosition] = useState({ x: 0, y: 0, zoom: 1 });
+  const [fullPage, setFullPage] = useState(false);
   const drag = useRef<{ x: number; y: number } | null>(null);
+  const viewport = useRef<HTMLDivElement>(null);
+  const world = useRef<HTMLDivElement>(null);
+  const inBounds = (next: { x: number; y: number; zoom: number }) => {
+    const box = viewport.current;
+    const content = world.current;
+    if (!box || !content) return next;
+    const slack = 48;
+    const width = content.offsetWidth * next.zoom;
+    const height = content.offsetHeight * next.zoom;
+    const limit = (value: number, visible: number, total: number) =>
+      Math.min(slack, Math.max(Math.min(0, visible - total - slack), value));
+    return {
+      ...next,
+      x: limit(next.x, box.clientWidth, width),
+      y: limit(next.y, box.clientHeight, height),
+    };
+  };
+  const branchIds = flatten(page.nodes)
+    .filter(({ node }) => node.kind === "panel" && node.children.length > 0)
+    .map(({ node }) => node.id);
+  const allOpen =
+    branchIds.length > 0 && branchIds.every((id) => expanded.has(id));
+  const setFull = (next: boolean) => {
+    setFullPage(next);
+    setPosition({ x: 0, y: 0, zoom: 1 });
+    if (next) setExpanded(new Set(branchIds));
+  };
+  useEffect(() => {
+    if (!fullPage) return;
+    const key = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setFull(false);
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [fullPage]);
   const toggle = (id: string) =>
     setExpanded((s) => {
       const next = new Set(s);
       next.has(id) ? next.delete(id) : next.add(id);
       return next;
     });
-  const render = (node: ParameterNode, inactive = false): ReactNode => (
-    <div
-      className={`map-step ${inactive || node.skipped ? "map-skipped" : ""}`}
-      key={node.id}
-    >
+  const render = (node: ParameterNode, inactive = false): ReactNode =>
+    node.kind === "text" ? null : (
       <div
-        className={`map-node tone-${node.kind === "panel" ? node.color : "blue"}`}
+        className={`map-step ${inactive || node.skipped ? "map-skipped" : ""}`}
+        key={node.id}
       >
-        <button
-          className="map-label"
-          onClick={() =>
-            document
-              .getElementById(`parameter-${node.id}`)
-              ?.scrollIntoView({ behavior: "smooth", block: "center" })
-          }
+        <div
+          className={`map-node tone-${node.kind === "panel" ? node.color : "blue"}`}
         >
-          {node.kind === "panel" ? (
-            <span className="map-dot" />
-          ) : (
-            <Icon name="more" size={13} />
-          )}
-          {node.title}
-        </button>
-        {node.kind === "panel" && node.children.length > 0 && (
           <button
-            className="map-expand"
-            aria-label={`${expanded.has(node.id) ? "Collapse" : "Expand"} ${node.title} in map`}
-            onClick={() => toggle(node.id)}
+            className="map-label"
+            onClick={() => {
+              if (fullPage) setFull(false);
+              requestAnimationFrame(() =>
+                document
+                  .getElementById(`parameter-${node.id}`)
+                  ?.scrollIntoView({ behavior: "smooth", block: "center" }),
+              );
+            }}
           >
-            {expanded.has(node.id) ? "−" : "+"}
+            {node.kind === "panel" ? (
+              <span className="map-dot" />
+            ) : (
+              <Icon name="more" size={13} />
+            )}
+            {node.title}
           </button>
-        )}
-        {node.kind === "selector" && (
-          <>
-            <span className="horizontal-line" />
-            <span className="map-value">
-              {node.skipped || inactive
-                ? "Skipped"
-                : node.options.find((o) => o.id === node.selectedId)?.label ||
-                  "Choose"}
-            </span>
-          </>
-        )}
-      </div>
-      {node.kind === "panel" && expanded.has(node.id) && (
-        <div className="map-children">
-          {node.children.map((child) =>
-            render(child, inactive || node.skipped),
+          {node.kind === "panel" && node.children.length > 0 && (
+            <button
+              className="map-expand"
+              aria-label={`${expanded.has(node.id) ? "Collapse" : "Expand"} ${node.title} in map`}
+              onClick={() => toggle(node.id)}
+            >
+              {expanded.has(node.id) ? "−" : "+"}
+            </button>
+          )}
+          {node.kind === "selector" && (
+            <>
+              <span className="horizontal-line" />
+              <span className="map-value">
+                {node.skipped || inactive
+                  ? "Skipped"
+                  : node.options.find((o) => o.id === node.selectedId)?.label ||
+                    "Choose"}
+              </span>
+            </>
           )}
         </div>
-      )}
-    </div>
-  );
+        {node.kind === "panel" && expanded.has(node.id) && (
+          <div className="map-children">
+            {node.children.map((child) =>
+              render(child, inactive || node.skipped),
+            )}
+          </div>
+        )}
+      </div>
+    );
   return (
-    <aside className="path-rail">
+    <aside className={`path-rail ${fullPage ? "map-full" : ""}`}>
       <div className="map-heading">
         <span>
           <Icon name="map" size={16} />
           Protocol path
         </span>
-        <span className="live-dot" title="Updates with your selections" />
+        <span className="map-heading-actions">
+          <span className="live-dot" title="Updates with your selections" />
+          <button
+            className="icon-button map-fullscreen-toggle"
+            aria-pressed={fullPage}
+            aria-label={
+              fullPage ? "Close the full page map" : "Open the map full page"
+            }
+            title={fullPage ? "Close full page (Esc)" : "Open full page"}
+            onClick={() => setFull(!fullPage)}
+          >
+            <Icon name={fullPage ? "shrink" : "expand"} size={15} />
+            {fullPage && <span>Close</span>}
+          </button>
+        </span>
       </div>
       <p className="map-subtitle">Your current configuration</p>
       <div
         className="map-viewport"
+        ref={viewport}
+        onWheel={(e) =>
+          setPosition((p) =>
+            inBounds(
+              e.ctrlKey || e.metaKey
+                ? {
+                    ...p,
+                    zoom: Math.min(2, Math.max(0.4, p.zoom - e.deltaY * 0.004)),
+                  }
+                : { ...p, x: p.x - e.deltaX, y: p.y - e.deltaY },
+            ),
+          )
+        }
         onPointerDown={(e) => {
           if ((e.target as HTMLElement).closest("button")) return;
           drag.current = {
@@ -1000,11 +1316,13 @@ export function PathMap({ page }: { page: Page }) {
         }}
         onPointerMove={(e) => {
           if (drag.current)
-            setPosition((p) => ({
-              ...p,
-              x: e.clientX - drag.current!.x,
-              y: e.clientY - drag.current!.y,
-            }));
+            setPosition((p) =>
+              inBounds({
+                ...p,
+                x: e.clientX - drag.current!.x,
+                y: e.clientY - drag.current!.y,
+              }),
+            );
         }}
         onPointerUp={() => {
           drag.current = null;
@@ -1015,6 +1333,7 @@ export function PathMap({ page }: { page: Page }) {
       >
         <div
           className="map-world"
+          ref={world}
           style={
             {
               transform: `translate(${position.x}px, ${position.y}px) scale(${position.zoom})`,
@@ -1033,7 +1352,9 @@ export function PathMap({ page }: { page: Page }) {
           <button
             aria-label="Zoom out"
             onClick={() =>
-              setPosition((p) => ({ ...p, zoom: Math.max(0.4, p.zoom - 0.15) }))
+              setPosition((p) =>
+                inBounds({ ...p, zoom: Math.max(0.4, p.zoom - 0.15) }),
+              )
             }
           >
             −
@@ -1047,13 +1368,29 @@ export function PathMap({ page }: { page: Page }) {
           <button
             aria-label="Zoom in"
             onClick={() =>
-              setPosition((p) => ({ ...p, zoom: Math.min(2, p.zoom + 0.15) }))
+              setPosition((p) =>
+                inBounds({ ...p, zoom: Math.min(2, p.zoom + 0.15) }),
+              )
             }
           >
             +
           </button>
         </div>
-        <p>Drag to pan · + to unfold</p>
+        <button
+          className="text-button map-unfold"
+          onClick={() => {
+            setExpanded(allOpen ? new Set() : new Set(branchIds));
+            setPosition((p) => ({ ...p, y: 0 }));
+          }}
+          disabled={branchIds.length === 0}
+        >
+          {allOpen ? "Fold all branches" : "Unfold all branches"}
+        </button>
+        <p>
+          {fullPage
+            ? "Drag to pan · Esc to close"
+            : "Drag to pan · + to unfold"}
+        </p>
         <div className="map-legend">
           <span>
             <i />

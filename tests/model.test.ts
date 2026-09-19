@@ -5,16 +5,19 @@ import {
   configuration,
   createRun,
   draftKey,
+  editRun,
   emptyDraft,
   flatten,
   mapNode,
   moveNode,
   newPage,
+  reorderSiblings,
   refLabel,
   removeNode,
   resolveProtocol,
   seedWorkspace,
 } from "../src/model.ts";
+import type { Panel } from "../src/model.ts";
 
 test("every page starts with the same optional modules", () => {
   const p = newPage("project", null, "Notes");
@@ -131,4 +134,90 @@ test("empty experiments are rejected and completed protocols can record repeated
   const b = createRun(p, draft);
   assert.equal(a.configuration, b.configuration);
   assert.notEqual(a.id, b.id);
+});
+
+test("editing a saved experiment revises the written record and keeps the snapshot", () => {
+  const workspace = seedWorkspace();
+  const page = workspace.pages[0];
+  const run = createRun(page, {
+    title: "Original",
+    notes: "First pass",
+    paths: "",
+    attachments: [],
+  });
+  const revised = editRun(run, {
+    title: "Corrected name",
+    notes: "Added a later observation",
+    paths: "~/lab/run-7",
+    attachments: [],
+  });
+  assert.equal(revised.id, run.id);
+  assert.equal(revised.title, "Corrected name");
+  assert.equal(revised.notes, "Added a later observation");
+  assert.equal(revised.paths, "~/lab/run-7");
+  assert.ok(revised.editedAt);
+  assert.equal(revised.createdAt, run.createdAt);
+  assert.equal(revised.configuration, run.configuration);
+  assert.equal(revised.protocol, run.protocol);
+  assert.equal(revised.template, run.template);
+  assert.deepEqual(revised.selections, run.selections);
+});
+
+test("dragging reorders siblings and never moves a node to another parent", () => {
+  const page = seedWorkspace().pages[0];
+  const top = page.nodes.map((node) => node.id);
+  const reordered = reorderSiblings(page.nodes, top[2], top[0]);
+  assert.deepEqual(
+    reordered.map((node) => node.id),
+    [top[2], top[0], top[1]],
+  );
+  const panel = page.nodes[1] as Panel;
+  const children = panel.children.map((node) => node.id);
+  const nested = reorderSiblings(page.nodes, children[1], children[0]);
+  const nestedPanel = nested[1] as Panel;
+  assert.deepEqual(
+    nestedPanel.children.map((node) => node.id),
+    [children[1], children[0]],
+  );
+  const across = reorderSiblings(page.nodes, children[0], top[0]);
+  assert.deepEqual(
+    across.map((node) => node.id),
+    top,
+  );
+  const stillNested = across[1] as Panel;
+  assert.deepEqual(
+    stillNested.children.map((node) => node.id),
+    children,
+  );
+});
+
+test("notes among the parameters never change a configuration or its results", () => {
+  const workspace = seedWorkspace();
+  const page = workspace.pages[0];
+  const before = configuration(page);
+  const note = { id: "note-1", kind: "text" as const, text: "Check the lamp." };
+  const withNote = {
+    ...page,
+    nodes: appendNode(page.nodes, null, note, page.nodes[0].id),
+  };
+  const after = configuration(withNote);
+  assert.equal(after.key, before.key);
+  assert.deepEqual(after.summary, before.summary);
+  assert.equal(withNote.nodes[1].id, "note-1");
+  const edited = {
+    ...withNote,
+    nodes: mapNode(withNote.nodes, "note-1", (n) =>
+      n.kind === "text" ? { ...n, text: "Rewritten note" } : n,
+    ),
+  };
+  assert.equal(configuration(edited).key, before.key);
+  const nested = appendNode(page.nodes, page.nodes[0].id, note);
+  const inside = nested[0];
+  assert.equal(inside.kind, "panel");
+  assert.equal(
+    (inside as Panel).children.at(-1)?.id,
+    "note-1",
+    "a note can live inside a panel",
+  );
+  assert.equal(configuration({ ...page, nodes: nested }).key, before.key);
 });

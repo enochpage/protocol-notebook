@@ -6,6 +6,9 @@ import {
   flatten,
   mapNode,
   moveNode,
+  nextColor,
+  nodeTitle,
+  reorderSiblings,
   newPage,
   now,
   removeNode,
@@ -33,6 +36,7 @@ type Dialog =
       type: "node";
       kind: "panel" | "selector";
       parentId: string | null;
+      afterId?: string;
       node?: ParameterNode;
     }
   | { type: "reference"; id: string; refType: string }
@@ -45,6 +49,7 @@ function App() {
   const [mapVisible, setMapVisible] = useState(() => window.innerWidth >= 1100);
   const [collapsedPages, setCollapsedPages] = useState<Set<string>>(new Set());
   const [mobileSidebar, setMobileSidebar] = useState(false);
+  const [reorderNotice, setReorderNotice] = useState("");
   const close = useCallback(() => setDialog(null), []);
   const scroll = useRef<HTMLElement>(null);
   const update = useCallback(
@@ -62,6 +67,23 @@ function App() {
           p.id === page.id ? { ...fn(p), updatedAt: now() } : p,
         ),
       }));
+  };
+  // Order is part of a configuration's identity, so moving a panel can detach
+  // results recorded under the previous order.
+  const rearrange = (fn: (p: Page) => Page) => {
+    if (!page || !workspace) return;
+    const next = fn(page);
+    const wasKey = configuration(page).key;
+    const nowKey = configuration(next).key;
+    const detached = workspace.runs.filter(
+      (run) => run.pageId === page.id && run.configuration === wasKey,
+    ).length;
+    changePage(() => next);
+    setReorderNotice(
+      wasKey !== nowKey && detached
+        ? `${detached} ${detached === 1 ? "experiment" : "experiments"} recorded under the previous order no longer ${detached === 1 ? "matches" : "match"} these selections. ${detached === 1 ? "It is" : "They are"} still in All experiments.`
+        : "",
+    );
   };
   const changeNode = (id: string, fn: (node: ParameterNode) => ParameterNode) =>
     changePage((p) => ({ ...p, nodes: mapNode(p.nodes, id, fn) }));
@@ -235,14 +257,21 @@ function App() {
       >
         <NodeForm
           kind={dialog.kind}
-          node={dialog.node}
+          node={dialog.node?.kind === "text" ? undefined : dialog.node}
           close={close}
           save={(node) => {
             changePage((p) => ({
               ...p,
               nodes: dialog.node
                 ? mapNode(p.nodes, node.id, () => node)
-                : appendNode(p.nodes, dialog.parentId, node),
+                : appendNode(
+                    p.nodes,
+                    dialog.parentId,
+                    node.kind === "panel" && !node.color
+                      ? { ...node, color: nextColor(p.nodes) }
+                      : node,
+                    dialog.afterId,
+                  ),
             }));
             close();
           }}
@@ -280,7 +309,7 @@ function App() {
     );
   if (dialog?.type === "remove" && page)
     modal = (
-      <Modal title={`Remove ${dialog.node.title}?`} close={close}>
+      <Modal title={`Remove ${nodeTitle(dialog.node)}?`} close={close}>
         <p>
           This removes the {dialog.node.kind}
           {dialog.node.kind === "panel"
@@ -315,7 +344,10 @@ function App() {
       (item) => item.node.id === (page.bindings[dialog.id] || dialog.id),
     );
     modal = (
-      <Modal title={target?.node.title || "Missing reference"} close={close}>
+      <Modal
+        title={(target && nodeTitle(target.node)) || "Missing reference"}
+        close={close}
+      >
         {!target || !original ? (
           <p className="notice">
             The referenced item has been removed. Edit the protocol and insert a
@@ -357,10 +389,9 @@ function App() {
             <button
               className="text-button"
               onClick={() => {
-                changeNode(target.node.id, (n) => ({
-                  ...n,
-                  skipped: !n.skipped,
-                }));
+                changeNode(target.node.id, (n) =>
+                  n.kind === "text" ? n : { ...n, skipped: !n.skipped },
+                );
                 close();
               }}
             >
@@ -399,8 +430,8 @@ function App() {
                     }}
                   >
                     <span>
-                      {node.title}
-                      {(node.skipped || inactive) && (
+                      {nodeTitle(node)}
+                      {((node.kind !== "text" && node.skipped) || inactive) && (
                         <small>Skipped in module</small>
                       )}
                     </span>
@@ -413,14 +444,15 @@ function App() {
             <button
               className="text-button"
               onClick={() => {
-                changeNode(target.node.id, (n) => ({
-                  ...n,
-                  skipped: !n.skipped,
-                }));
+                changeNode(target.node.id, (n) =>
+                  n.kind === "text" ? n : { ...n, skipped: !n.skipped },
+                );
                 close();
               }}
             >
-              {target.node.skipped ? "Include this panel" : "Skip this panel"}
+              {target.node.kind !== "text" && target.node.skipped
+                ? "Include this panel"
+                : "Skip this panel"}
             </button>
           </>
         )}
@@ -611,17 +643,11 @@ function App() {
               />
               <div className="page-properties">
                 <div>
-                  <span>
-                    <Icon name="folder" size={14} />
-                    Project
-                  </span>
+                  <span>Project</span>
                   <b>{project?.title}</b>
                 </div>
                 <div>
-                  <span>
-                    <Icon name="clock" size={14} />
-                    Created
-                  </span>
+                  <span>Created</span>
                   <b>
                     {new Date(page.createdAt).toLocaleDateString(undefined, {
                       month: "short",
@@ -698,14 +724,6 @@ function App() {
                   <div>
                     <span className="section-index">01</span>
                     <h2>Parameters</h2>
-                    <span className="count-badge">
-                      {
-                        flatten(page.nodes).filter(
-                          ({ node }) => node.kind === "selector",
-                        ).length
-                      }{" "}
-                      selectors
-                    </span>
                   </div>
                   {page.nodes.length > 0 && (
                     <span className="subtle-label">
@@ -715,22 +733,58 @@ function App() {
                     </span>
                   )}
                 </div>
+                {reorderNotice && (
+                  <p className="notice reorder-notice" role="status">
+                    <Icon name="clock" size={14} />
+                    {reorderNotice}
+                    <button
+                      className="text-button"
+                      onClick={() => setReorderNotice("")}
+                    >
+                      Dismiss
+                    </button>
+                  </p>
+                )}
                 <ParameterModule
                   page={page}
                   update={changeNode}
-                  add={(kind, parentId) =>
-                    setDialog({ type: "node", kind, parentId })
-                  }
+                  add={(kind, parentId, afterId) => {
+                    if (kind === "text") {
+                      const note: ParameterNode = {
+                        id: uid(),
+                        kind: "text",
+                        text: "",
+                      };
+                      changePage((p) => ({
+                        ...p,
+                        nodes: appendNode(p.nodes, parentId, note, afterId),
+                      }));
+                      return;
+                    }
+                    setDialog({ type: "node", kind, parentId, afterId });
+                  }}
                   edit={(node) =>
                     setDialog({
                       type: "node",
-                      kind: node.kind,
+                      kind: node.kind === "text" ? "panel" : node.kind,
                       node,
                       parentId: null,
                     })
                   }
                   remove={(node) => setDialog({ type: "remove", node })}
                   openPanel={openPanel}
+                  reorder={(id, targetId, after) =>
+                    rearrange((p) => ({
+                      ...p,
+                      nodes: reorderSiblings(p.nodes, id, targetId, after),
+                    }))
+                  }
+                  move={(id, direction) =>
+                    rearrange((p) => ({
+                      ...p,
+                      nodes: moveNode(p.nodes, id, direction),
+                    }))
+                  }
                 />
               </section>
               <Editor
