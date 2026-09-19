@@ -5,12 +5,13 @@ This is the shared working record for the user, Claude Code, and Codex. The code
 ## Current snapshot
 
 - Last updated: **2026-09-18**, by Claude Code.
-- Stage: functional local MVP, ready for user feedback and iterative development.
+- Stage: functional local MVP plus a substantial editing overhaul on 2026-09-18, committed on the branch `interface-overhaul` at the user's request and **not pushed**. `main` and `origin/main` are still at the documentation commit.
 - Repository: [enochpage/protocol-notebook](https://github.com/enochpage/protocol-notebook) — public.
-- Last published implementation: `7b9a554` — `Build local protocol notebook MVP`, on `main`.
+- Last published implementation: `7b9a554` — `Build local protocol notebook MVP`, on `main`. Nothing has been pushed since `150beed`.
+- The overhaul lives on `interface-overhaul`: one implementation commit (`src/blocks.tsx` new, plus `components.tsx`, `App.tsx`, `Results.tsx`, `model.ts`, `App.css`, `tests/model.test.ts`, `src-tauri/tauri.conf.json`) and one documentation commit. Merging it into `main` and pushing both await the user.
+- `.claude/` stays untracked: it holds a local launch config and the humanizer skill, neither of which belongs to this project's source.
 - Workspace: the actual local project folder is named `Notes_Taking`. Work in this checkout, not the separate synced ChatGPT project mirror. On another machine, use your own clone.
-- At the start of this documentation session, `main` matched `origin/main` and the working tree was clean.
-- The shared handoff/instruction documents (`HANDOFF.md`, `AGENTS.md`, `CLAUDE.md`, and the linked README/MVP edits) are committed as of 2026-09-18. Whether that commit is pushed is recorded in the session log below.
+- The demo vault in `data/vault/` was deliberately regenerated on 2026-09-18 (user decision) and now carries four demonstration experiments. It is ignored by Git.
 - No active implementation task is assigned. Ask for, or follow, the user's next requested improvement. The suggestions below are not an approved roadmap.
 
 ## What we are building
@@ -23,12 +24,12 @@ The example lithography content demonstrates software behavior; it is not a vali
 
 1. **One page model.** All pages are protocol-capable pages. Parameters and results can be left empty/disabled. No parameters means no flowchart.
 2. **Projects and nested pages.** Pages can contain pages recursively. Metadata includes title, creation date, project, and custom properties.
-3. **Panels are stages, not mutually exclusive choices.** Panels are ordered, nestable groups used unless skipped. Skipping a parent deactivates its descendants. Panels can contain panels and selectors.
+3. **Panels are stages, not mutually exclusive choices.** Panels are ordered, nestable groups used unless skipped. Skipping a parent deactivates its descendants. Panels can contain panels, selectors, and notes. A note is prose written among the parameters; it never affects configuration identity (user decision, 2026-09-18).
 4. **Selectors are leaves.** A parameter selector contains discrete options, chooses one option or is skipped, and cannot contain another selector.
 5. **Two different title interactions.** In the upper parameter module, a panel title opens its linked page. In rendered protocol text, a panel reference opens a sibling-selection control instead.
 6. **Shared live values.** Selecting a parameter through a protocol reference updates the upper selector and map too.
 7. **Configuration-specific results.** Results and unfinished drafts belong to a page and its exact configuration. Returning to that configuration recalls them. Multiple experiments per configuration are supported.
-8. **History is immutable.** Saving an experiment captures selected labels and the resolved protocol. Later template edits do not rewrite recorded experiments.
+8. **The captured snapshot is immutable; the written record is not.** Saving an experiment captures selected labels and the resolved protocol, and later template edits never rewrite them. The user's own name, observations, paths, and images on a saved experiment can be revised afterwards and carry an `editedAt` stamp (user decision, 2026-09-18).
 9. **Map is generated, not a separate source of truth.** The right-side map starts at the highest panel tier and supports expanding, panning, and zooming. Stage arrows run vertically; selected parameter values branch horizontally.
 10. **Local-first storage.** React provides the interface; Tauri/Rust provides the Mac shell and local storage bridge. Markdown remains the authoritative page text. No cloud service is required.
 
@@ -55,6 +56,15 @@ Implementation interpretation to review with the user: switching a sibling panel
 - Independent IndexedDB storage for browser preview.
 - Automated model/storage tests, interaction QA, and a packaged local debug Mac application.
 
+### Interface overhaul — 2026-09-18, local and uncommitted
+
+- Stylesheet tokenized; interface type raised to Notion/Obsidian sizes.
+- Protocol, and result observations, edited as blocks with a `/` menu; no modes and no editor dependency.
+- Parameter module gained notes, precise drag reordering, an automatic panel palette, and add-anywhere controls.
+- Results scoped to the current configuration, with a vault-wide browser, editable records, and no experiment names.
+- Map pans and opens full page; window default fits a 1470x956 display.
+- Demo vault regenerated with four demonstration experiments.
+
 ### Repository
 
 - Created the public GitHub repository and published the MVP as `7b9a554`.
@@ -67,8 +77,9 @@ Implementation interpretation to review with the user: switching a sibling panel
 | --------------------------- | -------------------------------------------------------------------------------------------------------------------- |
 | `src/model.ts`              | Types, tree operations, reference resolution, configuration/draft identity, experiment snapshots, demonstration data |
 | `src/App.tsx`               | App shell, project/page navigation, metadata, dialogs, and page/reference actions                                    |
-| `src/components.tsx`        | Parameter UI, Markdown rendering/editor, reference picker, images, and path map                                      |
-| `src/Results.tsx`           | Configuration-specific drafts, attachments, saved experiments, and snapshot viewing                                  |
+| `src/blocks.tsx`            | `BlockDocument`: the block editor used by the protocol and by result observations, plus Markdown/block conversion    |
+| `src/components.tsx`        | Parameter module with notes and dragging, Markdown rendering with callouts, reference picker, images, and path map   |
+| `src/Results.tsx`           | Configuration-specific drafts, the vault-wide experiment browser, editable records, and the path picker              |
 | `src/useNotebook.ts`        | Loading, debounced serialized saves, save errors, and close-time flushing                                            |
 | `src/storage.ts`            | Native command adapter and separate browser IndexedDB adapter                                                        |
 | `src/App.css`               | Notebook layout, local fonts, colored panels, references, and map styling                                            |
@@ -87,6 +98,8 @@ Implementation interpretation to review with the user: switching a sibling panel
 - Page identity also scopes draft/result lookup. Editing an option's value must not recall an experiment recorded with the old value.
 - Saved runs preserve resolved Markdown, the original template, selected labels, notes, paths, and attachment metadata. Preserve them when evolving the schema.
 - Reference syntax is documented in docs/MVP.md; retain compatibility when changing the editor.
+- Parameter nodes are panels, selectors, or `kind: "text"` notes. Notes are excluded from configuration identity, the path map, and the reference picker, so writing one can never detach a recorded result. Keep that exclusion if the node model grows.
+- A saved run may carry an optional `editedAt`. Its written record (title, notes, paths, attachments) is editable; its `configuration`, `selections`, `protocol`, `template`, and `createdAt` are not. Experiments are no longer named on capture, and `runLabel()` derives a display label from the first written line, preferring `title` when an older record has one.
 
 ### Storage and safety
 
@@ -141,15 +154,15 @@ Recorded in [docs/qa/README.md](docs/qa/README.md):
 
 The interactive browser and native checks above are historical passes from 2026-09-16, not claims of fresh execution.
 
-### Automated re-verification: 2026-09-18 (Claude Code)
+### Verification: 2026-09-18 (Claude Code)
 
-Rerun on the unchanged `7b9a554` application code, with Node v26.7.0, npm 11.19.0, and cargo 1.98.1:
+Two rounds this day. Early in the day, on the unchanged `7b9a554` code with Node v26.7.0, npm 11.19.0 and cargo 1.98.1: `npm test` 9 passed, `npm run build` passed, `cargo test` 2 passed.
 
-- `npm test`: 9 domain tests passed.
-- `npm run build`: TypeScript and production frontend build passed.
-- `cargo test --manifest-path src-tauri/Cargo.toml`: 2 Rust storage tests passed.
+After the editing overhaul, repeatedly through the day and last at its end: `npx tsc --noEmit` clean, `npm test` 12 passed, `npm run build` passed. Browser QA at 1320x860 and 1180x820 covered the block editor, the `/` menu, notes among parameters, the results form and experiment browser, the full page map, and the responsive breakpoints.
 
-Not rerun in this session: the interactive browser QA, the native packaged-app checks, and the Tauri app bundle build. The 2026-09-16 boundaries above still stand, including the unverified native image upload/reopen path.
+Mac app QA, driven against a debug `.app` bundle through accessibility: dragged a panel above another and back, dragged a protocol block below a list and back, and saw the path map and the detached-results warning update. `cargo test` was not rerun after the overhaul; no Rust code changed.
+
+**Boundaries.** The 2026-09-16 boundaries still stand, including the unverified native image upload/reopen path. The folder and file pickers have never been clicked, only type-checked. Keyboard selection inside the `/` menu was exercised through dispatched events because the browser pane delivers Return and arrow keys malformed. Browser QA cannot prove webview behavior: dragging was implemented twice, and the HTML5 version passed in the browser while doing nothing in the Mac app.
 
 ## Known limitations and potential next steps (optional)
 
@@ -159,7 +172,9 @@ These are discussion ideas, not must-do tasks, commitments, or a fixed sequence.
 - A native image upload/save/reopen check could close a gap in the existing verification.
 - A user-chosen portable vault location with migration safeguards could make future distribution more practical.
 - Independent backups, external-edit conflict handling, and quit/interruption checks could strengthen data protection.
-- Editing ergonomics could be explored; current Markdown editing and interactive reading are separate modes.
+- Inline marks are still Markdown while a block is open (bold reads as `**bold**`, a table is edited as raw pipes). True inline WYSIWYG would need an editor dependency, which the user declined on 2026-09-18.
+- Clicking a rendered block places the caret at the end of it rather than at the clicked character.
+- The `/` menu inside a parameter note offers only Panel and Selector, not the text block types.
 
 Other current limits: result paths are text references, not validated/openable files; image uploads support PNG/JPEG/GIF/WebP up to 12 MB; panel and linked-page titles are independently editable; no page move/delete, project rename, full-text search, cloud sync, or multi-user editing.
 
@@ -227,3 +242,20 @@ Reference: [Claude Code project instructions and imports](https://code.claude.co
 - Git state / commit: documentation committed on `main`. Not pushed by this session; pushing awaits the user's go-ahead.
 - Remaining user-requested work: none assigned. Awaiting the user's choice of next task.
 - Potential next steps (optional, not approved tasks): the open sibling-reference versus panel-inclusion interpretation still needs the user's review through hands-on use; the native image upload/reopen check remains the clearest verification gap.
+
+### 2026-09-18 — Claude Code — Interface overhaul: tokens, type, block editing, results
+
+- Request: a series of interface improvements across one working day, each asked for in turn — design tokens and larger type; a full page protocol map; demonstration results; editable saved records; results scoped to the current configuration; a folder picker; drag reordering; Notion-style block editing for the protocol, the parameter module, and result observations; and a set of smaller corrections.
+- Changes, styling: `src/App.css` now defines color, type scale and radius as tokens on `:root` and reads them through `var()` (133 of ~160 color literals and every font-size and radius replaced; 34 literals remain, mostly panel tone variants). Type runs 11-40px with interface text at 13-15px and body at 16px, matching Notion and Obsidian. Sidebar 262px, map rail 292px. Page property rows lost their leading icons.
+- Changes, protocol editor: new `src/blocks.tsx` holds `BlockDocument`, which renders Markdown as blocks and edits one at a time with its markers stripped, so a heading is typed as text. Return starts a block, Backspace at the start of an empty one removes it, lists continue and end on an empty item, every block has an add button and a drag handle, and `/` opens a menu of seventeen block types. Callouts and foldable sections are written as `> [!note]` and `> [!toggle]`, parsed in `MarkdownView`, and stay ordinary blockquotes elsewhere. The old Read/Edit/Markdown toggle is gone. No editor dependency was added; the user chose that explicitly.
+- Changes, parameters: added a third node kind, `kind: "text"` notes, which hold Markdown and take no part in configuration identity. Selectors are confined to panels; notes sit at either level. Panels take their color from `PALETTE` in creation order and the Add panel dialog no longer asks. Every node has a gutter with an add button (Return on the handle does the same) and a drag handle. `reorderSiblings()` takes an `after` flag so a drop inserts above or below rather than swapping. The selector count beside the heading is gone.
+- Changes, results: the page section lists only the current configuration; a new All experiments modal browses the whole vault with configuration chips and search. Saved records are editable through `editRun()`, which stamps `editedAt` and leaves the captured configuration, selections, protocol and template untouched. Experiments are no longer named; `runLabel()` lists them by their first written line. The draft form is Observations (a `BlockDocument`) plus "Data saving path", which the Mac app fills from the system dialog through `@tauri-apps/plugin-dialog`.
+- Changes, map and window: the map pans with the wheel and clamps to its content, opens full page from its heading, and unfolds every branch there. `.path-rail` needed `min-height: 0`, without which it grew to fit an unfolded map and pushed its own controls off screen. The window default went from 1440x980 to 1320x860 centered, because 980 was taller than this display and the bottom of the window sat off screen.
+- Decisions taken with the user: amend accepted decision 8 so the captured snapshot stays immutable while the written record is editable; warn when a reorder detaches results rather than removing order from the configuration key; add text nodes to the parameter tree rather than merging parameters into the page body; regenerate the demo vault rather than edit it; and add no editor dependency.
+- Two bugs worth remembering. The map problem was `min-height: auto` on a flex/grid child, not panning. The reorder problem was HTML5 drag and drop, which WKWebView does not deliver the way Chromium does; both drag surfaces now use pointer events with the drag state in refs, and `dragDropEnabled: false` was added to the window config. Browser QA passed the broken version, which is why dragging must be checked in the Mac app.
+- Verification actually run and outcome: see the verification section above. In short, `npx tsc --noEmit` clean, `npm test` 12 passed (three new tests: editing a record keeps its snapshot, reordering stays within a parent, notes never change a configuration key), `npm run build` passed, browser QA through the day, and a Mac app check of both drag surfaces against a debug bundle.
+- Unverified or blocked: the folder and file dialogs have never been clicked; `cargo test` was not rerun after the overhaul, though no Rust changed; the native image upload/reopen gap from 2026-09-16 is still open.
+- Git state: committed on the branch `interface-overhaul` at the user's request, in two commits (implementation, then documentation). Nothing merged into `main` and nothing pushed. A debug `.app` sits in `src-tauri/target/debug/bundle/`, which Git ignores.
+- Data note: the demo page's "Preparation" heading and paragraph are missing from the vault. They had already gone before the Mac app testing began, so they were removed during ordinary use rather than by a test. The user was offered a restore and has not answered.
+- Remaining user-requested work: none outstanding.
+- Potential next steps (optional, not approved tasks): dark mode, now that colors are tokenized and only one block needs writing; an editor dependency if inline WYSIWYG is wanted; mapping a click to a caret position inside a block; Markdown block types inside parameter notes; and merging `interface-overhaul` into `main` and pushing, when the user wants it published.

@@ -15,7 +15,7 @@ This repository is Protocol Notebook, a Mac-first, local-first Tauri + React app
 
 - Every page uses the same model. Parameters and results are optional; do not introduce separate ordinary/protocol page types without approval.
 - Panels are ordered, independently skippable groups. Selectors choose one option or skip; they contain only options.
-- Preserve stable IDs, configuration-specific drafts/results, and immutable saved experiment snapshots. Changes to schema or configuration keys need a compatibility/migration plan and tests.
+- Preserve stable IDs and configuration-specific drafts/results. A saved experiment's captured configuration, selection labels, and protocol snapshot are immutable; its written record (name, observations, paths, images) is editable and stamps `editedAt`. Changes to schema or configuration keys need a compatibility/migration plan and tests.
 - Markdown files are the authoritative page bodies. Browser preview storage and native vault storage are independent.
 - Never commit or upload personal notes, vault contents, result images, credentials, or local machine configuration. Keep `data/` and build output ignored.
 - Do not overwrite existing Box source files. Work on local copies; finished Box outputs must use new filenames.

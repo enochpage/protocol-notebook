@@ -31,3 +31,6 @@ data/
 !.env.example
 *.pem
 *.key
+
+# Locally installed assistant skills are not part of this project's source.
+.claude/skills/
