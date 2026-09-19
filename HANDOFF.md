@@ -5,10 +5,9 @@ This is the shared working record for the user, Claude Code, and Codex. The code
 ## Current snapshot
 
 - Last updated: **2026-09-18**, by Claude Code.
-- Stage: functional local MVP plus a substantial editing overhaul on 2026-09-18, committed on the branch `interface-overhaul` at the user's request and **not pushed**. `main` and `origin/main` are still at the documentation commit.
+- Stage: functional local MVP plus a substantial editing overhaul on 2026-09-18, committed and pushed by the user. `main` and `origin/main` are level.
 - Repository: [enochpage/protocol-notebook](https://github.com/enochpage/protocol-notebook) — public.
-- Last published implementation: `7b9a554` — `Build local protocol notebook MVP`, on `main`. Nothing has been pushed since `150beed`.
-- The overhaul lives on `interface-overhaul`: one implementation commit (`src/blocks.tsx` new, plus `components.tsx`, `App.tsx`, `Results.tsx`, `model.ts`, `App.css`, `tests/model.test.ts`, `src-tauri/tauri.conf.json`) and one documentation commit. Merging it into `main` and pushing both await the user.
+- Last published implementation: `f2676b8` on `main`. The overhaul went out as two commits: `5782931` for the code (`src/blocks.tsx` new, plus `components.tsx`, `App.tsx`, `Results.tsx`, `model.ts`, `App.css`, `tests/model.test.ts`, `src-tauri/tauri.conf.json`) and `f2676b8` for the documentation. The `interface-overhaul` branch they were made on can be deleted.
 - `.claude/` stays untracked: it holds a local launch config and the humanizer skill, neither of which belongs to this project's source.
 - Workspace: the actual local project folder is named `Notes_Taking`. Work in this checkout, not the separate synced ChatGPT project mirror. On another machine, use your own clone.
 - The demo vault in `data/vault/` was deliberately regenerated on 2026-09-18 (user decision) and now carries four demonstration experiments. It is ignored by Git.
@@ -255,7 +254,7 @@ Reference: [Claude Code project instructions and imports](https://code.claude.co
 - Two bugs worth remembering. The map problem was `min-height: auto` on a flex/grid child, not panning. The reorder problem was HTML5 drag and drop, which WKWebView does not deliver the way Chromium does; both drag surfaces now use pointer events with the drag state in refs, and `dragDropEnabled: false` was added to the window config. Browser QA passed the broken version, which is why dragging must be checked in the Mac app.
 - Verification actually run and outcome: see the verification section above. In short, `npx tsc --noEmit` clean, `npm test` 12 passed (three new tests: editing a record keeps its snapshot, reordering stays within a parent, notes never change a configuration key), `npm run build` passed, browser QA through the day, and a Mac app check of both drag surfaces against a debug bundle.
 - Unverified or blocked: the folder and file dialogs have never been clicked; `cargo test` was not rerun after the overhaul, though no Rust changed; the native image upload/reopen gap from 2026-09-16 is still open.
-- Git state: committed on the branch `interface-overhaul` at the user's request, in two commits (implementation, then documentation). Nothing merged into `main` and nothing pushed. A debug `.app` sits in `src-tauri/target/debug/bundle/`, which Git ignores.
+- Git state: committed in two commits (implementation `5782931`, documentation `f2676b8`), merged to `main` and pushed by the user. A debug `.app` sits in `src-tauri/target/debug/bundle/`, which Git ignores.
 - Data note: the demo page's "Preparation" heading and paragraph are missing from the vault. They had already gone before the Mac app testing began, so they were removed during ordinary use rather than by a test. The user was offered a restore and has not answered.
 - Remaining user-requested work: none outstanding.
-- Potential next steps (optional, not approved tasks): dark mode, now that colors are tokenized and only one block needs writing; an editor dependency if inline WYSIWYG is wanted; mapping a click to a caret position inside a block; Markdown block types inside parameter notes; and merging `interface-overhaul` into `main` and pushing, when the user wants it published.
+- Potential next steps (optional, not approved tasks): dark mode, now that colors are tokenized and only one block needs writing; an editor dependency if inline WYSIWYG is wanted; mapping a click to a caret position inside a block; Markdown block types inside parameter notes.
